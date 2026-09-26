@@ -9,7 +9,7 @@ info:
 
     1. **ASR** — speech-to-text transcription of the uploaded audio.
     2. **LLM Extraction** — extraction of summary, decisions and action items.
-    3. **Email** — dispatch of the generated MoM to the target inbox (Mailpit).
+    3. **Email** — route the finished MoM to the local n8n webhook and send it by SMTP to the category inbox (Mailpit).
 
     ## Typical flow
     1. `POST /api/pipeline` with a multipart audio file → returns a job `id`.

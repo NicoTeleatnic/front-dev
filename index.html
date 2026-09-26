@@ -452,7 +452,7 @@
       <span class="label">STATUS:</span>
       <span class="step pending" id="step-asr"><span class="mark">1</span><span class="step-text">ASR</span></span>
       <span class="step pending" id="step-llm"><span class="mark">2</span><span class="step-text">LLM Extraction</span></span>
-      <span class="step pending" id="step-email"><span class="mark">3</span><span class="step-text">Complete</span></span>
+      <span class="step pending" id="step-email"><span class="mark">3</span><span class="step-text">Email</span></span>
       <div class="progress-wrap">
         <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
       </div>
@@ -632,7 +632,7 @@
             clearInterval(state.polling);
             state.polling = null;
             setRunning(false);
-            markAllError();
+            if (r.data.result) renderResult(r.data.result);
             showError(r.data.message || 'Pipeline reported an error during processing.');
           }
         })
@@ -674,7 +674,7 @@
   }
 
   function labelFor(key) {
-    return { asr: 'ASR', llm: 'LLM Extraction', email: 'Complete' }[key] || key;
+    return { asr: 'ASR', llm: 'LLM Extraction', email: 'Email' }[key] || key;
   }
 
   // ---- Render results -----------------------------------------------------

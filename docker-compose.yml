@@ -1,0 +1,32 @@
+# Local n8n + SMTP (Mailpit) for the MEDPARK Secure MoM backend.
+# Nothing here leaves the laptop. Mailpit only catches mail; it does not deliver to the internet.
+
+services:
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: medpark-mailpit
+    ports:
+      - "1025:1025" # SMTP — backend sends here
+      - "8025:8025" # web inbox — open http://localhost:8025
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: medpark-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      N8N_SECURE_COOKIE: "false"
+      GENERIC_TIMEZONE: Europe/Chisinau
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    restart: unless-stopped
+
+volumes:
+  n8n_data:

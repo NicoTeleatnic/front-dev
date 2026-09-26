@@ -1,0 +1,29 @@
+{
+  "name": "Secure MOM",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "secure-mom",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "c0ffee00-0000-4000-8000-000000000001",
+      "name": "MoM Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 300],
+      "webhookId": "secure-mom"
+    }
+  ],
+  "connections": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
