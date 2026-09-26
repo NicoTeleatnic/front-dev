@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MEDPARK SECURE MoM</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #111a2e;
+    --panel-2: #0e1626;
+    --border: #22304d;
+    --border-strong: #33456b;
+    --text: #dbe4f5;
+    --muted: #8397bd;
+    --accent: #35d0a5;
+    --accent-dim: #1f7a63;
+    --danger: #ff5c6c;
+    --warn: #ffc857;
+    --blue: #4aa8ff;
+    --mono: 'SFMono-Regular', 'Consolas', 'Menlo', 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #16233f 0%, transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app {
+    max-width: 1240px;
+    margin: 20px auto;
+    padding: 0 16px 40px;
+  }
+
+  /* ---- Frame ---- */
+  .frame {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--panel);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.45);
+  }
+
+  /* ---- Top bar ---- */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: linear-gradient(180deg, #16223d, #101a30);
+    border-bottom: 1px solid var(--border-strong);
+  }
+  .brand {
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .brand .logo { font-size: 18px; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 6px 12px;
+    border: 1px solid var(--accent-dim);
+    border-radius: 999px;
+    color: var(--accent);
+    background: rgba(53, 208, 165, 0.08);
+  }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+    animation: pulse 1.8s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  /* ---- Body grid ---- */
+  .body {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+  }
+  @media (max-width: 860px) { .body { grid-template-columns: 1fr; } }
+
+  .col {
+    padding: 18px;
+  }
+  .col.left {
+    border-right: 1px solid var(--border);
+    background: var(--panel-2);
+  }
+  @media (max-width: 860px) {
+    .col.left { border-right: none; border-bottom: 1px solid var(--border); }
+  }
+
+  .col-title {
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin: 0 0 14px;
+    text-transform: uppercase;
+  }
+
+  .field { margin-bottom: 18px; }
+  .field > label.head {
+    display: block;
+    font-size: 12px;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+
+  /* radios */
+  .radio {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  .radio:hover { background: rgba(74,168,255,0.06); }
+  .radio input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .radio.checked { border-color: var(--accent-dim); background: rgba(53,208,165,0.07); }
+
+  /* dropzone */
+  .dropzone {
+    border: 1.5px dashed var(--border-strong);
+    border-radius: 10px;
+    padding: 22px 14px;
+    text-align: center;
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color .15s, background .15s, color .15s;
+    user-select: none;
+  }
+  .dropzone .ico { font-size: 26px; display:block; margin-bottom: 8px; }
+  .dropzone:hover { border-color: var(--blue); color: var(--text); }
+  .dropzone.dragover {
+    border-color: var(--accent);
+    background: rgba(53,208,165,0.08);
+    color: var(--text);
+  }
+  .dropzone.has-file {
+    border-style: solid;
+    border-color: var(--accent-dim);
+    color: var(--text);
+  }
+  .file-name { font-size: 12px; color: var(--accent); word-break: break-all; }
+
+  .presets { display: flex; gap: 8px; margin-top: 10px; }
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .5px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: #14203a;
+    color: var(--text);
+    cursor: pointer;
+    transition: background .15s, border-color .15s, transform .05s;
+  }
+  .btn:hover { border-color: var(--blue); background: #182848; }
+  .btn:active { transform: translateY(1px); }
+  .btn.small { padding: 6px 10px; }
+
+  input[type="text"] {
+    width: 100%;
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: #0c1526;
+    color: var(--text);
+  }
+  input[type="text"]:focus { outline: none; border-color: var(--blue); }
+
+  .run-btn {
+    width: 100%;
+    margin-top: 4px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    padding: 14px;
+    border-radius: 10px;
+    border: 1px solid var(--accent);
+    background: linear-gradient(180deg, #1c6f5a, #14503f);
+    color: #eafff8;
+    cursor: pointer;
+    transition: filter .15s, transform .05s;
+  }
+  .run-btn:hover { filter: brightness(1.12); }
+  .run-btn:active { transform: translateY(1px); }
+  .run-btn:disabled {
+    opacity: .55; cursor: not-allowed; filter: grayscale(.3);
+  }
+
+  /* ---- Right column / preview ---- */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    width: fit-content;
+  }
+  .tab {
+    padding: 9px 18px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--muted);
+    background: #0d1830;
+    border-right: 1px solid var(--border);
+  }
+  .tab:last-child { border-right: none; }
+  .tab.active { color: #06110d; background: var(--accent); font-weight: 700; }
+
+  .section-title {
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--blue);
+    margin: 18px 0 8px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+  }
+  .section-title:first-child { margin-top: 0; }
+
+  .prose { color: var(--text); line-height: 1.6; }
+  ul.clean { list-style: none; padding-left: 0; margin: 0; }
+  ul.clean li { padding: 4px 0 4px 20px; position: relative; }
+  ul.clean li::before {
+    content: '▸'; color: var(--accent); position: absolute; left: 2px;
+  }
+
+  table.items {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 6px;
+    font-size: 13px;
+  }
+  table.items th, table.items td {
+    text-align: left;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+  }
+  table.items th {
+    background: #0d1830;
+    color: var(--muted);
+    letter-spacing: 1px;
+    font-size: 11px;
+    text-transform: uppercase;
+  }
+  table.items tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+
+  .placeholder {
+    color: var(--muted);
+    text-align: center;
+    padding: 40px 10px;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    line-height: 1.7;
+  }
+
+  .transcript-line {
+    display: flex; gap: 10px; padding: 7px 0;
+    border-bottom: 1px dashed var(--border);
+  }
+  .lang-tag {
+    flex: 0 0 auto;
+    font-size: 11px; font-weight: 700;
+    padding: 2px 7px; border-radius: 5px;
+    background: #14203a; color: var(--blue);
+    border: 1px solid var(--border-strong);
+    height: fit-content;
+  }
+  .lang-tag.RO { color: var(--warn); }
+
+  .hidden { display: none !important; }
+
+  /* ---- Status bar ---- */
+  .statusbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 18px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-strong);
+    background: #0c1424;
+    font-size: 12px;
+    letter-spacing: .5px;
+  }
+  .statusbar .label { color: var(--muted); margin-right: 6px; }
+  .step {
+    display: inline-flex; align-items: center; gap: 7px;
+    color: var(--muted);
+  }
+  .step .mark {
+    width: 16px; height: 16px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700;
+    border: 1px solid var(--border-strong);
+  }
+  .step.pending .mark { color: var(--muted); }
+  .step.running { color: var(--warn); }
+  .step.running .mark {
+    color: var(--warn); border-color: var(--warn);
+    animation: spin 1s linear infinite;
+  }
+  .step.done { color: var(--accent); }
+  .step.done .mark { color: #06110d; background: var(--accent); border-color: var(--accent); }
+  .step.error { color: var(--danger); }
+  .step.error .mark { color: var(--danger); border-color: var(--danger); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error-banner {
+    margin: 0 18px 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--danger);
+    border-radius: 8px;
+    background: rgba(255,92,108,0.08);
+    color: #ffd7dc;
+  }
+
+  .progress-wrap { flex: 1 1 160px; min-width: 140px; }
+  .progress-track {
+    height: 8px; border-radius: 999px;
+    background: #0a1120; border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    transition: width .4s ease;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="frame">
+
+    <!-- Top bar -->
+    <div class="topbar">
+      <div class="brand"><span class="logo">🏥</span> MEDPARK SECURE MoM</div>
+      <div class="badge"><span class="dot"></span> 100% OFFLINE · LOCAL GPU ACTIVE</div>
+    </div>
+
+    <!-- Body -->
+    <div class="body">
+
+      <!-- LEFT: input & config -->
+      <div class="col left">
+        <h2 class="col-title">Input &amp; Configuration</h2>
+
+        <div class="field">
+          <label class="head">Meeting Category</label>
+          <label class="radio checked"><input type="radio" name="category" value="Medical Board" checked> Medical Board</label>
+          <label class="radio"><input type="radio" name="category" value="Executive Board"> Executive Board</label>
+          <label class="radio"><input type="radio" name="category" value="Administrative"> Administrative</label>
+        </div>
+
+        <div class="field">
+          <label class="head">Audio Source</label>
+          <div id="dropzone" class="dropzone">
+            <span class="ico">📁</span>
+            <div id="dropText">Drag &amp; Drop Audio File<br>or Click to Browse</div>
+            <div id="fileName" class="file-name"></div>
+          </div>
+          <input id="fileInput" type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac" class="hidden">
+
+          <label class="head" style="margin-top:14px">Demo Presets</label>
+          <div class="presets">
+            <button class="btn small" data-preset="Sample 1">Sample 1</button>
+            <button class="btn small" data-preset="Sample 2">Sample 2</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="head">Target Inbox</label>
+          <input id="targetInbox" type="text" value="medical-board@medpark.local">
+        </div>
+
+        <button id="runBtn" class="run-btn">► RUN SECURE PIPELINE</button>
+      </div>
+
+      <!-- RIGHT: preview -->
+      <div class="col right">
+        <h2 class="col-title">Minutes of Meeting Preview</h2>
+
+        <div class="tabs">
+          <div class="tab active" data-tab="mom">★ MoM Document</div>
+          <div class="tab" data-tab="transcript">Multilingual Transcript</div>
+        </div>
+
+        <!-- MoM tab -->
+        <div id="tab-mom">
+          <div id="momPlaceholder" class="placeholder">
+            No minutes generated yet.<br>
+            Attach an audio file and run the secure pipeline to extract the MoM.
+          </div>
+
+          <div id="momContent" class="hidden">
+            <div class="section-title">Summary</div>
+            <div id="summary" class="prose"></div>
+
+            <div class="section-title">Decisions Made</div>
+            <ul id="decisions" class="clean"></ul>
+
+            <div class="section-title">Action Items</div>
+            <table class="items">
+              <thead>
+                <tr><th>Action</th><th>Owner</th><th>Deadline</th></tr>
+              </thead>
+              <tbody id="actionItems"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Transcript tab -->
+        <div id="tab-transcript" class="hidden">
+          <div id="transcriptPlaceholder" class="placeholder">
+            Transcript will appear here once the pipeline completes.
+          </div>
+          <div id="transcriptContent" class="hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error banner -->
+    <div id="errorBanner" class="error-banner hidden"></div>
+
+    <!-- Status bar -->
+    <div class="statusbar">
+      <span class="label">STATUS:</span>
+      <span class="step pending" id="step-asr"><span class="mark">1</span><span class="step-text">ASR</span></span>
+      <span class="step pending" id="step-llm"><span class="mark">2</span><span class="step-text">LLM Extraction</span></span>
+      <span class="step pending" id="step-email"><span class="mark">3</span><span class="step-text">Email → Mailpit</span></span>
+      <div class="progress-wrap">
+        <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // Backend base. Empty string => same origin (served by server.js).
+  var API_BASE = '';
+
+  var state = {
+    file: null,        // File object or synthetic preset descriptor
+    presetName: null,  // if a demo preset was chosen instead of a real file
+    polling: null,
+  };
+
+  // ---- Element refs -------------------------------------------------------
+  var $ = function (id) { return document.getElementById(id); };
+  var dropzone = $('dropzone');
+  var fileInput = $('fileInput');
+  var fileNameEl = $('fileName');
+  var dropText = $('dropText');
+  var runBtn = $('runBtn');
+  var errorBanner = $('errorBanner');
+  var progressFill = $('progressFill');
+
+  var STEP_IDS = { asr: 'step-asr', llm: 'step-llm', email: 'step-email' };
+  var STEP_MARKS = { asr: '1', llm: '2', email: '3' };
+
+  // ---- Category radios highlight -----------------------------------------
+  document.querySelectorAll('input[name="category"]').forEach(function (r) {
+    r.addEventListener('change', function () {
+      document.querySelectorAll('.radio').forEach(function (el) { el.classList.remove('checked'); });
+      r.closest('.radio').classList.add('checked');
+      // convenience: sync a sensible default inbox
+      var map = {
+        'Medical Board': 'medical-board@medpark.local',
+        'Executive Board': 'executive-board@medpark.local',
+        'Administrative': 'admin@medpark.local'
+      };
+      $('targetInbox').value = map[r.value] || $('targetInbox').value;
+    });
+  });
+
+  function selectedCategory() {
+    var el = document.querySelector('input[name="category"]:checked');
+    return el ? el.value : 'Medical Board';
+  }
+
+  // ---- Tabs ---------------------------------------------------------------
+  document.querySelectorAll('.tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      var which = tab.getAttribute('data-tab');
+      $('tab-mom').classList.toggle('hidden', which !== 'mom');
+      $('tab-transcript').classList.toggle('hidden', which !== 'transcript');
+    });
+  });
+
+  // ---- File selection -----------------------------------------------------
+  dropzone.addEventListener('click', function () { fileInput.click(); });
+
+  fileInput.addEventListener('change', function () {
+    if (fileInput.files && fileInput.files[0]) setFile(fileInput.files[0]);
+  });
+
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    dropzone.addEventListener(ev, function (e) {
+      e.preventDefault(); e.stopPropagation();
+      dropzone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    dropzone.addEventListener(ev, function (e) {
+      e.preventDefault(); e.stopPropagation();
+      dropzone.classList.remove('dragover');
+    });
+  });
+  dropzone.addEventListener('drop', function (e) {
+    var dt = e.dataTransfer;
+    if (dt && dt.files && dt.files[0]) setFile(dt.files[0]);
+  });
+
+  function setFile(file) {
+    state.file = file;
+    state.presetName = null;
+    dropzone.classList.add('has-file');
+    dropText.textContent = 'Audio ready:';
+    fileNameEl.textContent = file.name + '  (' + humanSize(file.size) + ')';
+  }
+
+  function humanSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // ---- Demo presets -------------------------------------------------------
+  document.querySelectorAll('[data-preset]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var name = b.getAttribute('data-preset');
+      // Build a tiny synthetic WAV-ish blob so there is a real file to POST.
+      var blob = makeDemoBlob(name);
+      var file = new File([blob], name.replace(' ', '_').toLowerCase() + '.wav', { type: 'audio/wav' });
+      setFile(file);
+      state.presetName = name;
+      dropText.textContent = 'Demo preset loaded:';
+    });
+  });
+
+  function makeDemoBlob(seedText) {
+    // Not a real audio recording — just non-empty bytes for the mock pipeline.
+    var payload = 'DEMO-AUDIO::' + seedText + '::' + '0'.repeat(2048);
+    return new Blob([payload], { type: 'audio/wav' });
+  }
+
+  // ---- Run pipeline -------------------------------------------------------
+  runBtn.addEventListener('click', runPipeline);
+
+  function runPipeline() {
+    hideError();
+    if (!state.file) {
+      showError('Please attach an audio file or load a demo preset before running.');
+      return;
+    }
+
+    resetStatus();
+    setRunning(true);
+
+    var form = new FormData();
+    form.append('audio', state.file, state.file.name);
+    form.append('category', selectedCategory());
+    form.append('targetInbox', $('targetInbox').value.trim());
+
+    fetch(API_BASE + '/api/pipeline', { method: 'POST', body: form })
+      .then(function (res) {
+        return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+      })
+      .then(function (r) {
+        if (!r.ok || r.data.error) {
+          throw new Error(r.data.error || 'Pipeline submission failed.');
+        }
+        // We received a job id — begin tracking progress.
+        trackJob(r.data.id);
+      })
+      .catch(function (err) {
+        setRunning(false);
+        markAllError();
+        showError(err.message || 'Network error contacting the pipeline.');
+      });
+  }
+
+  // ---- Poll status --------------------------------------------------------
+  function trackJob(id) {
+    if (state.polling) clearInterval(state.polling);
+
+    var poll = function () {
+      fetch(API_BASE + '/api/status/' + id)
+        .then(function (res) {
+          return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+        })
+        .then(function (r) {
+          if (!r.ok || r.data.error) throw new Error(r.data.error || 'Lost track of the job.');
+          applyStatus(r.data);
+          if (r.data.status === 'done') {
+            clearInterval(state.polling);
+            state.polling = null;
+            setRunning(false);
+            renderResult(r.data.result);
+          } else if (r.data.status === 'error') {
+            clearInterval(state.polling);
+            state.polling = null;
+            setRunning(false);
+            markAllError();
+            showError('Pipeline reported an error during processing.');
+          }
+        })
+        .catch(function (err) {
+          clearInterval(state.polling);
+          state.polling = null;
+          setRunning(false);
+          markAllError();
+          showError(err.message);
+        });
+    };
+
+    poll();
+    state.polling = setInterval(poll, 700);
+  }
+
+  function applyStatus(data) {
+    if (typeof data.progress === 'number') {
+      progressFill.style.width = data.progress + '%';
+    }
+    (data.steps || []).forEach(function (s) {
+      var el = $(STEP_IDS[s.key]);
+      if (!el) return;
+      el.classList.remove('pending', 'running', 'done', 'error');
+      el.classList.add(s.state);
+      var mark = el.querySelector('.mark');
+      var text = el.querySelector('.step-text');
+      if (s.state === 'done') {
+        mark.textContent = '✓';
+        if (s.elapsed) text.textContent = labelFor(s.key) + ' (' + s.elapsed + 's)';
+      } else if (s.state === 'running') {
+        mark.textContent = '◌';
+        text.textContent = labelFor(s.key) + '…';
+      } else {
+        mark.textContent = STEP_MARKS[s.key];
+        text.textContent = labelFor(s.key);
+      }
+    });
+  }
+
+  function labelFor(key) {
+    return { asr: 'ASR', llm: 'LLM Extraction', email: 'Email → Mailpit' }[key] || key;
+  }
+
+  // ---- Render results -----------------------------------------------------
+  function renderResult(result) {
+    if (!result) return;
+
+    $('summary').textContent = result.summary || '';
+
+    var dl = $('decisions');
+    dl.innerHTML = '';
+    (result.decisions || []).forEach(function (d) {
+      var li = document.createElement('li');
+      li.textContent = d;
+      dl.appendChild(li);
+    });
+
+    var tb = $('actionItems');
+    tb.innerHTML = '';
+    (result.actionItems || []).forEach(function (a) {
+      var tr = document.createElement('tr');
+      tr.appendChild(cell(a.action));
+      tr.appendChild(cell(a.owner));
+      tr.appendChild(cell(a.deadline));
+      tb.appendChild(tr);
+    });
+
+    $('momPlaceholder').classList.add('hidden');
+    $('momContent').classList.remove('hidden');
+
+    // Transcript
+    var tc = $('transcriptContent');
+    tc.innerHTML = '';
+    (result.transcript || []).forEach(function (line) {
+      var row = document.createElement('div');
+      row.className = 'transcript-line';
+      var tag = document.createElement('span');
+      tag.className = 'lang-tag ' + (line.lang || '');
+      tag.textContent = line.lang || '—';
+      var txt = document.createElement('span');
+      txt.textContent = line.text;
+      row.appendChild(tag);
+      row.appendChild(txt);
+      tc.appendChild(row);
+    });
+    $('transcriptPlaceholder').classList.add('hidden');
+    tc.classList.remove('hidden');
+  }
+
+  function cell(text) {
+    var td = document.createElement('td');
+    td.textContent = text != null ? text : '';
+    return td;
+  }
+
+  // ---- Status helpers -----------------------------------------------------
+  function resetStatus() {
+    progressFill.style.width = '0%';
+    ['asr', 'llm', 'email'].forEach(function (k) {
+      var el = $(STEP_IDS[k]);
+      el.classList.remove('running', 'done', 'error');
+      el.classList.add('pending');
+      el.querySelector('.mark').textContent = STEP_MARKS[k];
+      el.querySelector('.step-text').textContent = labelFor(k);
+    });
+  }
+
+  function markAllError() {
+    ['asr', 'llm', 'email'].forEach(function (k) {
+      var el = $(STEP_IDS[k]);
+      if (!el.classList.contains('done')) {
+        el.classList.remove('pending', 'running');
+        el.classList.add('error');
+        el.querySelector('.mark').textContent = '✕';
+      }
+    });
+  }
+
+  function setRunning(isRunning) {
+    runBtn.disabled = isRunning;
+    runBtn.textContent = isRunning ? '⟳ RUNNING SECURE PIPELINE…' : '► RUN SECURE PIPELINE';
+  }
+
+  function showError(msg) {
+    errorBanner.textContent = '⚠ ' + msg;
+    errorBanner.classList.remove('hidden');
+  }
+  function hideError() {
+    errorBanner.classList.add('hidden');
+    errorBanner.textContent = '';
+  }
+})();
+</script>
+</body>
+</html>

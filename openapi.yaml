@@ -1,0 +1,331 @@
+openapi: 3.0.3
+info:
+  title: MEDPARK SECURE MoM API
+  version: 1.0.0
+  description: |
+    Mock API for the **MEDPARK Secure Minutes-of-Meeting** pipeline.
+
+    The pipeline runs fully offline on a local GPU and consists of three stages:
+
+    1. **ASR** — speech-to-text transcription of the uploaded audio.
+    2. **LLM Extraction** — extraction of summary, decisions and action items.
+    3. **Email** — dispatch of the generated MoM to the target inbox (Mailpit).
+
+    ## Typical flow
+    1. `POST /api/pipeline` with a multipart audio file → returns a job `id`.
+    2. Poll `GET /api/status/{id}` until `status` is `done` (or `error`).
+    3. When `done`, the `result` object contains the generated MoM.
+  contact:
+    name: MEDPARK Secure MoM
+license:
+  name: MIT
+
+servers:
+  - url: http://localhost:3000
+    description: Local mock backend
+
+tags:
+  - name: Pipeline
+    description: Submit audio and track MoM generation progress.
+  - name: Frontend
+    description: Static assets served by the mock backend.
+
+paths:
+  /api/pipeline:
+    post:
+      tags: [Pipeline]
+      summary: Submit an audio file to the secure pipeline
+      description: |
+        Uploads an audio recording together with meeting metadata and starts the
+        MoM generation pipeline. Returns a job `id` used to track progress.
+
+        The request body must be `multipart/form-data`. The maximum accepted
+        payload size is **50 MB**.
+      operationId: submitPipeline
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio]
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                  description: The meeting audio recording (wav, mp3, m4a, ogg, flac).
+                category:
+                  type: string
+                  description: Meeting category. Determines the MoM template.
+                  enum:
+                    - Medical Board
+                    - Executive Board
+                    - Administrative
+                  default: Medical Board
+                targetInbox:
+                  type: string
+                  description: Destination inbox for the generated MoM email.
+                  example: medical-board@medpark.local
+            encoding:
+              audio:
+                contentType: audio/wav, audio/mpeg, audio/mp4, audio/ogg, audio/flac
+      responses:
+        '202':
+          description: Job accepted and pipeline started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCreated'
+              example:
+                id: 7660df3b71b81c7c
+                status: running
+        '400':
+          description: Malformed request (missing multipart boundary or bad payload).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingBoundary:
+                  value:
+                    error: Expected multipart/form-data with a boundary.
+                malformed:
+                  value:
+                    error: Malformed upload payload.
+        '422':
+          description: Validation error (no file, or empty file).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                noFile:
+                  value:
+                    error: No audio file received. Please attach a recording.
+                emptyFile:
+                  value:
+                    error: Audio file is empty.
+
+  /api/status/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get the status of a pipeline job
+      description: |
+        Returns the current status and per-stage progress of a job.
+        Once `status` is `done`, the `result` field contains the generated MoM;
+        until then `result` is `null`.
+      operationId: getPipelineStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The job id returned by `POST /api/pipeline`.
+          schema:
+            type: string
+          example: 7660df3b71b81c7c
+      responses:
+        '200':
+          description: Current job status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatus'
+              examples:
+                running:
+                  summary: Job in progress
+                  value:
+                    id: 7660df3b71b81c7c
+                    status: running
+                    progress: 33
+                    currentStage: llm
+                    steps:
+                      - { key: asr, label: ASR, state: done, elapsed: "3.2" }
+                      - { key: llm, label: LLM Extraction, state: running, elapsed: null }
+                      - { key: email, label: Email Sent to Mailpit, state: pending, elapsed: null }
+                    result: null
+                done:
+                  summary: Job complete
+                  value:
+                    id: 7660df3b71b81c7c
+                    status: done
+                    progress: 100
+                    currentStage: email
+                    steps:
+                      - { key: asr, label: ASR, state: done, elapsed: "3.2" }
+                      - { key: llm, label: LLM Extraction, state: done, elapsed: "4.1" }
+                      - { key: email, label: Email Sent to Mailpit, state: done, elapsed: "1.2" }
+                    result:
+                      category: Medical Board
+                      targetInbox: medical-board@medpark.local
+                      fileName: demo.wav
+                      summary: Discussed patient case #4092. Approved emergency cardiac intervention and post-op ICU protocols.
+                      decisions:
+                        - Proceed with TAVI procedure on Tuesday morning.
+                        - Allocate extra dosage reserves in ICU.
+                      actionItems:
+                        - { action: Finalize surgical kit, owner: Dr. Cojocaru, deadline: "2026-09-27" }
+                        - { action: Transfer lab results, owner: Nurse Anna, deadline: "Today 18:00" }
+                      transcript:
+                        - { lang: EN, text: "Chair: Let us begin with patient case number 4092." }
+                        - { lang: RO, text: "Dr. Cojocaru: Pacientul necesită o intervenție cardiacă de urgență." }
+        '404':
+          description: No job exists with the supplied id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Unknown job id.
+
+  /:
+    get:
+      tags: [Frontend]
+      summary: Serve the single-page frontend
+      operationId: getIndex
+      responses:
+        '200':
+          description: The application HTML.
+          content:
+            text/html:
+              schema:
+                type: string
+
+components:
+  schemas:
+    JobCreated:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          description: Unique job identifier.
+          example: 7660df3b71b81c7c
+        status:
+          type: string
+          description: Initial job status.
+          enum: [queued, running]
+          example: running
+
+    JobStatus:
+      type: object
+      required: [id, status, progress, steps]
+      properties:
+        id:
+          type: string
+          example: 7660df3b71b81c7c
+        status:
+          $ref: '#/components/schemas/Status'
+        progress:
+          type: integer
+          description: Completion percentage (0–100).
+          minimum: 0
+          maximum: 100
+          example: 66
+        currentStage:
+          type: string
+          nullable: true
+          description: Key of the stage currently running.
+          enum: [asr, llm, email, null]
+          example: llm
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/Step'
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/MoMResult'
+            - type: 'null'
+          description: The generated MoM, present only when `status` is `done`.
+
+    Status:
+      type: string
+      enum: [queued, running, done, error]
+      description: |
+        * `queued` — accepted, not yet started.
+        * `running` — a stage is currently executing.
+        * `done` — finished, `result` populated.
+        * `error` — the pipeline failed.
+
+    Step:
+      type: object
+      required: [key, label, state]
+      properties:
+        key:
+          type: string
+          enum: [asr, llm, email]
+        label:
+          type: string
+          example: LLM Extraction
+        state:
+          type: string
+          enum: [pending, running, done, error]
+        elapsed:
+          type: string
+          nullable: true
+          description: Seconds the stage took, as a fixed-1-decimal string.
+          example: "4.1"
+
+    MoMResult:
+      type: object
+      properties:
+        category:
+          type: string
+          example: Medical Board
+        targetInbox:
+          type: string
+          example: medical-board@medpark.local
+        fileName:
+          type: string
+          example: demo.wav
+        summary:
+          type: string
+          description: Narrative summary of the meeting.
+        decisions:
+          type: array
+          description: Decisions made during the meeting.
+          items:
+            type: string
+        actionItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionItem'
+        transcript:
+          type: array
+          items:
+            $ref: '#/components/schemas/TranscriptLine'
+
+    ActionItem:
+      type: object
+      required: [action, owner, deadline]
+      properties:
+        action:
+          type: string
+          example: Finalize surgical kit
+        owner:
+          type: string
+          example: Dr. Cojocaru
+        deadline:
+          type: string
+          description: Free-form deadline (date or relative time).
+          example: "2026-09-27"
+
+    TranscriptLine:
+      type: object
+      required: [lang, text]
+      properties:
+        lang:
+          type: string
+          description: ISO-ish language tag of the utterance.
+          example: EN
+        text:
+          type: string
+          example: "Chair: Let us begin with patient case number 4092."
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+          example: No audio file received. Please attach a recording.
