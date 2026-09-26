@@ -292,6 +292,7 @@
     height: fit-content;
   }
   .lang-tag.RO { color: var(--warn); }
+  .lang-tag.RU { color: var(--accent); }
 
   .hidden { display: none !important; }
 
@@ -451,7 +452,7 @@
       <span class="label">STATUS:</span>
       <span class="step pending" id="step-asr"><span class="mark">1</span><span class="step-text">ASR</span></span>
       <span class="step pending" id="step-llm"><span class="mark">2</span><span class="step-text">LLM Extraction</span></span>
-      <span class="step pending" id="step-email"><span class="mark">3</span><span class="step-text">Email → Mailpit</span></span>
+      <span class="step pending" id="step-email"><span class="mark">3</span><span class="step-text">Complete</span></span>
       <div class="progress-wrap">
         <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
       </div>
@@ -632,7 +633,7 @@
             state.polling = null;
             setRunning(false);
             markAllError();
-            showError('Pipeline reported an error during processing.');
+            showError(r.data.message || 'Pipeline reported an error during processing.');
           }
         })
         .catch(function (err) {
@@ -661,7 +662,7 @@
       var text = el.querySelector('.step-text');
       if (s.state === 'done') {
         mark.textContent = '✓';
-        if (s.elapsed) text.textContent = labelFor(s.key) + ' (' + s.elapsed + 's)';
+        text.textContent = s.elapsed ? labelFor(s.key) + ' (' + s.elapsed + 's)' : labelFor(s.key);
       } else if (s.state === 'running') {
         mark.textContent = '◌';
         text.textContent = labelFor(s.key) + '…';
@@ -673,7 +674,7 @@
   }
 
   function labelFor(key) {
-    return { asr: 'ASR', llm: 'LLM Extraction', email: 'Email → Mailpit' }[key] || key;
+    return { asr: 'ASR', llm: 'LLM Extraction', email: 'Complete' }[key] || key;
   }
 
   // ---- Render results -----------------------------------------------------

@@ -40,7 +40,7 @@ paths:
         MoM generation pipeline. Returns a job `id` used to track progress.
 
         The request body must be `multipart/form-data`. The maximum accepted
-        payload size is **50 MB**.
+        payload size is **60 MB**.
       operationId: submitPipeline
       requestBody:
         required: true

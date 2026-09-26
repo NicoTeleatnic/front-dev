@@ -1,30 +1,30 @@
 /**
- * MEDPARK SECURE MoM — Mock Backend (Express + TypeScript)
+ * MEDPARK SECURE MoM — Express backend
  *
- * Simulates a fully-local (offline) pipeline:
- *   ASR (speech-to-text) -> LLM extraction -> Email dispatch to Mailpit.
+ * The page still talks to this server. Uploads are forwarded to the
+ * Secure MOM service running in Docker (mom-llm-v1):
+ *   POST /api/v1/meetings
+ *   GET  /api/v1/meetings/{job_id}/status
+ *   GET  /api/v1/meetings/{job_id}/result
  *
- * Endpoints:
- *   GET  /                  -> serves index.html
+ * Endpoints served here:
+ *   GET  /                  -> index.html
  *   GET  /openapi.yaml      -> raw OpenAPI spec
  *   GET  /api-docs | /docs  -> Swagger UI
- *   POST /api/pipeline      -> accepts multipart audio upload, returns { id }
- *   GET  /api/status/:id    -> returns pipeline progress; final result when done
+ *   POST /api/pipeline      -> forwards the audio file, returns { id }
+ *   GET  /api/status/:id    -> maps the LLM job into the page's progress shape
  *
- * Run (dev):   npm run dev
- * Run (build): npm run build && npm start
+ * LLM_BASE_URL defaults to http://127.0.0.1:8000
  */
 
 import express, { Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
-import crypto from 'crypto';
 
 const PORT: number = Number(process.env.PORT) || 3000;
-const MAX_BYTES = 50 * 1024 * 1024; // 50 MB upload cap
-
-// Static assets (index.html, openapi.yaml) live in the project root, which is
-// the CWD for both `npm run dev` and `npm start` — regardless of dist/ output.
+const MAX_MB = 60;
+const MAX_BYTES = MAX_MB * 1024 * 1024;
+const LLM_BASE_URL = (process.env.LLM_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 const STATIC_DIR = process.cwd();
 
 /* ------------------------------------------------------------------ */
@@ -32,9 +32,11 @@ const STATIC_DIR = process.cwd();
 /* ------------------------------------------------------------------ */
 
 type MeetingCategory = 'Medical Board' | 'Executive Board' | 'Administrative';
+type MeetingType = 'Medical' | 'Executive' | 'Administrative';
 type StageKey = 'asr' | 'llm' | 'email';
 type StepState = 'pending' | 'running' | 'done' | 'error';
 type JobStatus = 'queued' | 'running' | 'done' | 'error';
+type LlmStage = 'QUEUED' | 'TRANSCRIBING' | 'EXTRACTING_DECISIONS' | 'COMPLETED' | 'FAILED';
 
 interface ActionItem {
   action: string;
@@ -47,17 +49,14 @@ interface TranscriptLine {
   text: string;
 }
 
-interface MoMTemplate {
+interface MoMResult {
+  category: MeetingCategory;
+  targetInbox: string;
+  fileName: string;
   summary: string;
   decisions: string[];
   actionItems: ActionItem[];
   transcript: TranscriptLine[];
-}
-
-interface MoMResult extends MoMTemplate {
-  category: MeetingCategory;
-  targetInbox: string;
-  fileName: string;
 }
 
 interface Step {
@@ -65,31 +64,66 @@ interface Step {
   label: string;
   state: StepState;
   elapsed: string | null;
-  startedAt?: number;
 }
 
-interface Job {
-  id: string;
-  status: JobStatus;
-  progress: number;
-  category: MeetingCategory;
+interface TrackedJob {
   targetInbox: string;
   fileName: string;
-  fileSize: number;
-  currentStage: StageKey | null;
-  createdAt: number;
-  steps: Step[];
+  category: MeetingCategory;
   result: MoMResult | null;
 }
 
+interface LlmJobCreated {
+  job_id: string;
+  status: LlmStage;
+  message: string;
+}
+
+interface LlmJobStatus {
+  job_id: string;
+  status: LlmStage;
+  progress_percent: number;
+  elapsed_seconds: number;
+  message: string;
+}
+
+interface LlmActionItem {
+  task: string;
+  owner: string;
+  deadline: string;
+}
+
+interface LlmMoMResult {
+  job_id: string;
+  status: LlmStage;
+  meeting_type: string;
+  filename: string;
+  summary: string;
+  decisions_made: string[];
+  action_items: LlmActionItem[];
+  transcript_preview: string;
+}
+
 /* ------------------------------------------------------------------ */
-/* In-memory state                                                    */
+/* In-memory metadata (the LLM service owns the actual job)          */
 /* ------------------------------------------------------------------ */
 
-/** jobId -> job */
-const jobs = new Map<string, Job>();
+const jobs = new Map<string, TrackedJob>();
 
-/** Swagger UI page — loads assets from the Swagger CDN, spec from this server. */
+const CATEGORY_TO_TYPE: Record<MeetingCategory, MeetingType> = {
+  'Medical Board': 'Medical',
+  'Executive Board': 'Executive',
+  Administrative: 'Administrative',
+};
+
+const TYPE_TO_CATEGORY: Record<string, MeetingCategory> = {
+  Medical: 'Medical Board',
+  Executive: 'Executive Board',
+  Administrative: 'Administrative',
+};
+
+const VALID_CATEGORIES: MeetingCategory[] = ['Medical Board', 'Executive Board', 'Administrative'];
+
 const SWAGGER_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -122,129 +156,181 @@ const SWAGGER_HTML = `<!DOCTYPE html>
 </html>`;
 
 /* ------------------------------------------------------------------ */
-/* Mock data                                                          */
+/* LLM client                                                         */
 /* ------------------------------------------------------------------ */
 
-// Canned "MoM" results keyed by meeting category so the demo feels responsive.
-const MOM_TEMPLATES: Record<MeetingCategory, MoMTemplate> = {
-  'Medical Board': {
-    summary:
-      'Discussed patient case #4092. Approved emergency cardiac intervention ' +
-      'and post-op ICU protocols. Reviewed anesthesia risk profile and confirmed ' +
-      'availability of the surgical team for the scheduled window.',
-    decisions: [
-      'Proceed with TAVI procedure on Tuesday morning.',
-      'Allocate extra dosage reserves in ICU.',
-      'Assign Dr. Cojocaru as lead surgeon for case #4092.',
-    ],
-    actionItems: [
-      { action: 'Finalize surgical kit', owner: 'Dr. Cojocaru', deadline: '2026-09-27' },
-      { action: 'Transfer lab results', owner: 'Nurse Anna', deadline: 'Today 18:00' },
-      { action: 'Confirm ICU bed reservation', owner: 'Ward Coordinator', deadline: '2026-09-26' },
-    ],
-    transcript: [
-      { lang: 'EN', text: 'Chair: Let us begin with patient case number 4092.' },
-      { lang: 'RO', text: 'Dr. Cojocaru: Pacientul necesită o intervenție cardiacă de urgență.' },
-      { lang: 'EN', text: 'Dr. Cojocaru: The patient requires an emergency cardiac intervention.' },
-      { lang: 'RO', text: 'Asistenta Anna: Rezultatele de laborator vor fi transferate până la ora 18:00.' },
-      { lang: 'EN', text: 'Nurse Anna: Lab results will be transferred by 18:00 today.' },
-    ],
-  },
-  'Executive Board': {
-    summary:
-      'Reviewed Q3 operational performance and the 2027 capital expenditure plan. ' +
-      'Approved budget reallocation toward the new imaging wing and discussed ' +
-      'hiring targets for the upcoming quarter.',
-    decisions: [
-      'Approve CapEx for the new MRI suite.',
-      'Freeze non-clinical hiring until Q1 2027.',
-      'Green-light the telemedicine pilot program.',
-    ],
-    actionItems: [
-      { action: 'Draft MRI procurement RFP', owner: 'CFO Office', deadline: '2026-10-05' },
-      { action: 'Publish hiring freeze memo', owner: 'HR Director', deadline: '2026-09-28' },
-      { action: 'Scope telemedicine vendors', owner: 'CTO', deadline: '2026-10-10' },
-    ],
-    transcript: [
-      { lang: 'EN', text: 'CEO: Q3 revenue is up 6% against forecast.' },
-      { lang: 'RO', text: 'CFO: Propun realocarea bugetului către noua aripă de imagistică.' },
-      { lang: 'EN', text: 'CFO: I propose reallocating the budget toward the new imaging wing.' },
-    ],
-  },
-  'Administrative': {
-    summary:
-      'Covered facility maintenance schedules, updated visitor policy, and the ' +
-      'rollout of the new records management system across departments.',
-    decisions: [
-      'Adopt the new digital visitor sign-in system.',
-      'Schedule HVAC maintenance for the east wing next weekend.',
-      'Migrate paper records to the new DMS by end of quarter.',
-    ],
-    actionItems: [
-      { action: 'Deploy visitor kiosks', owner: 'Facilities', deadline: '2026-10-02' },
-      { action: 'Book HVAC contractor', owner: 'Ops Manager', deadline: '2026-09-29' },
-      { action: 'Train staff on DMS', owner: 'IT Support', deadline: '2026-10-15' },
-    ],
-    transcript: [
-      { lang: 'EN', text: 'Admin: The new visitor policy takes effect next Monday.' },
-      { lang: 'RO', text: 'IT: Migrarea documentelor va fi finalizată până la sfârșitul trimestrului.' },
-      { lang: 'EN', text: 'IT: Document migration will be completed by end of quarter.' },
-    ],
-  },
-};
-
-// Pipeline stages, each with a simulated duration (ms).
-const STAGES: { key: StageKey; label: string; durationMs: number }[] = [
-  { key: 'asr', label: 'ASR', durationMs: 3200 },
-  { key: 'llm', label: 'LLM Extraction', durationMs: 4100 },
-  { key: 'email', label: 'Email Sent to Mailpit', durationMs: 1200 },
-];
-
-const VALID_CATEGORIES: MeetingCategory[] = ['Medical Board', 'Executive Board', 'Administrative'];
-
-/* ------------------------------------------------------------------ */
-/* Pipeline simulation                                                */
-/* ------------------------------------------------------------------ */
-
-function startPipeline(job: Job): void {
-  let index = 0;
-
-  const runNext = (): void => {
-    if (index >= STAGES.length) {
-      job.status = 'done';
-      job.progress = 100;
-      job.result = buildResult(job);
-      return;
-    }
-
-    const stage = STAGES[index];
-    const step = job.steps[index];
-    job.status = 'running';
-    job.currentStage = stage.key;
-    step.state = 'running';
-    step.startedAt = Date.now();
-
-    setTimeout(() => {
-      const elapsed = ((Date.now() - (step.startedAt ?? Date.now())) / 1000).toFixed(1);
-      step.state = 'done';
-      step.elapsed = elapsed;
-      index += 1;
-      job.progress = Math.round((index / STAGES.length) * 100);
-      runNext();
-    }, stage.durationMs);
-  };
-
-  runNext();
+class LlmError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'LlmError';
+  }
 }
 
-function buildResult(job: Job): MoMResult {
-  const template = MOM_TEMPLATES[job.category] ?? MOM_TEMPLATES['Medical Board'];
+async function llmFetch(apiPath: string, init: RequestInit = {}, timeoutMs = 20000): Promise<globalThis.Response> {
+  try {
+    return await fetch(`${LLM_BASE_URL}${apiPath}`, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new LlmError(
+      `Meeting service at ${LLM_BASE_URL} is not reachable (${detail}). Is mom-llm-v1 running with port 8000 published?`,
+      502,
+    );
+  }
+}
+
+async function readJson(res: globalThis.Response): Promise<Record<string, unknown>> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return { message: text };
+  }
+}
+
+function errorText(body: Record<string, unknown>, fallback: string): string {
+  const detail = body.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (item && typeof item === 'object' && 'msg' in item && typeof item.msg === 'string') return item.msg;
+        return '';
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join('; ');
+  }
+  if (typeof body.message === 'string' && body.message.trim()) return body.message;
+  if (typeof body.error === 'string' && body.error.trim()) return body.error;
+  return fallback;
+}
+
+function meetingTypeFor(category: MeetingCategory): MeetingType {
+  return CATEGORY_TO_TYPE[category] ?? 'Medical';
+}
+
+function categoryFor(meetingType: string, fallback: MeetingCategory): MeetingCategory {
+  return TYPE_TO_CATEGORY[meetingType] ?? fallback;
+}
+
+/** Guess the language of a transcript line from its script and diacritics. */
+function detectLang(text: string): string {
+  if (/[\u0400-\u04FF]/.test(text)) return 'RU';
+  if (/[ăâîșțĂÂÎȘȚ]/.test(text)) return 'RO';
+  return 'EN';
+}
+
+/**
+ * The service returns the transcript as one string. Lines are separated by
+ * newlines or by `[hh:mm:ss]` timestamps, so split on both.
+ */
+function previewToTranscript(preview: string): TranscriptLine[] {
+  if (!preview || !preview.trim()) return [];
+
+  const chunks = preview
+    .split(/\r?\n/)
+    .flatMap((line) => line.split(/(?=\[\d{1,2}:\d{2}(?::\d{2})?\])/))
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return chunks.map((line) => {
+    const tagged = line.match(/^\[?(EN|RO|RU)\]?\s*[:\-]\s*(.+)$/i);
+    if (tagged) return { lang: tagged[1].toUpperCase(), text: tagged[2] };
+    return { lang: detectLang(line), text: line };
+  });
+}
+
+function mapResult(remote: LlmMoMResult, job: TrackedJob): MoMResult {
   return {
-    category: job.category,
+    category: categoryFor(remote.meeting_type, job.category),
     targetInbox: job.targetInbox,
-    fileName: job.fileName,
-    ...template,
+    fileName: remote.filename || job.fileName,
+    summary: remote.summary || '',
+    decisions: remote.decisions_made || [],
+    actionItems: (remote.action_items || []).map((item) => ({
+      action: item.task,
+      owner: item.owner,
+      deadline: item.deadline,
+    })),
+    transcript: previewToTranscript(remote.transcript_preview || ''),
   };
+}
+
+function stepsFor(stage: LlmStage, elapsedSeconds: number): { status: JobStatus; currentStage: StageKey | null; steps: Step[] } {
+  const elapsed = Number.isFinite(elapsedSeconds) ? elapsedSeconds.toFixed(1) : null;
+  const steps: Step[] = [
+    { key: 'asr', label: 'ASR', state: 'pending', elapsed: null },
+    { key: 'llm', label: 'LLM Extraction', state: 'pending', elapsed: null },
+    { key: 'email', label: 'Complete', state: 'pending', elapsed: null },
+  ];
+
+  if (stage === 'QUEUED') {
+    return { status: 'queued', currentStage: null, steps };
+  }
+  if (stage === 'TRANSCRIBING') {
+    steps[0].state = 'running';
+    steps[0].elapsed = elapsed;
+    return { status: 'running', currentStage: 'asr', steps };
+  }
+  if (stage === 'EXTRACTING_DECISIONS') {
+    steps[0].state = 'done';
+    steps[1].state = 'running';
+    steps[1].elapsed = elapsed;
+    return { status: 'running', currentStage: 'llm', steps };
+  }
+  if (stage === 'FAILED') {
+    steps[0].state = 'error';
+    return { status: 'error', currentStage: 'asr', steps };
+  }
+
+  steps.forEach((step) => {
+    step.state = 'done';
+  });
+  steps[2].elapsed = elapsed;
+  return { status: 'done', currentStage: 'email', steps };
+}
+
+async function submitAudio(
+  file: Express.Multer.File,
+  meetingType: MeetingType,
+): Promise<LlmJobCreated> {
+  const form = new FormData();
+  const copy = new ArrayBuffer(file.buffer.byteLength);
+  new Uint8Array(copy).set(file.buffer);
+  form.append('file', new Blob([copy], { type: file.mimetype || 'application/octet-stream' }), file.originalname);
+  form.append('meeting_type', meetingType);
+
+  const res = await llmFetch('/api/v1/meetings', { method: 'POST', body: form }, 120000);
+  const body = await readJson(res);
+  if (!res.ok) {
+    throw new LlmError(errorText(body, `Upload rejected by the meeting service (${res.status}).`), res.status);
+  }
+  const jobId = body.job_id;
+  if (typeof jobId !== 'string' || !jobId) {
+    throw new LlmError('Meeting service did not return a job id.', 502);
+  }
+  return body as unknown as LlmJobCreated;
+}
+
+async function fetchStatus(jobId: string): Promise<LlmJobStatus> {
+  const res = await llmFetch(`/api/v1/meetings/${encodeURIComponent(jobId)}/status`);
+  const body = await readJson(res);
+  if (res.status === 404) throw new LlmError('Unknown job id.', 404);
+  if (!res.ok) throw new LlmError(errorText(body, `Status request failed (${res.status}).`), res.status);
+  return body as unknown as LlmJobStatus;
+}
+
+async function fetchResult(jobId: string): Promise<LlmMoMResult> {
+  const res = await llmFetch(`/api/v1/meetings/${encodeURIComponent(jobId)}/result`);
+  const body = await readJson(res);
+  if (!res.ok) throw new LlmError(errorText(body, `Result request failed (${res.status}).`), res.status);
+  return body as unknown as LlmMoMResult;
 }
 
 /* ------------------------------------------------------------------ */
@@ -253,13 +339,11 @@ function buildResult(job: Job): MoMResult {
 
 const app = express();
 
-// multer: keep uploads in memory — we only need the byte count for the mock.
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_BYTES },
 });
 
-// Permissive CORS for the demo frontend.
 app.use((_req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -268,7 +352,6 @@ app.use((_req, res, next) => {
 });
 app.options('*', (_req, res) => res.sendStatus(204));
 
-// --- Static frontend & docs ------------------------------------------------
 app.get(['/', '/index.html'], (_req: Request, res: Response) => {
   res.sendFile(path.join(STATIC_DIR, 'index.html'));
 });
@@ -281,79 +364,97 @@ app.get(['/api-docs', '/docs'], (_req: Request, res: Response) => {
   res.type('html').send(SWAGGER_HTML);
 });
 
-// --- Submit a job ----------------------------------------------------------
-app.post('/api/pipeline', upload.single('audio'), (req: Request, res: Response) => {
-  const file = req.file;
-  const rawCategory = (req.body?.category as string) || 'Medical Board';
-  const category: MeetingCategory = VALID_CATEGORIES.includes(rawCategory as MeetingCategory)
-    ? (rawCategory as MeetingCategory)
-    : 'Medical Board';
-  const targetInbox = (req.body?.targetInbox as string) || 'medical-board@medpark.local';
+app.post('/api/pipeline', upload.single('audio'), async (req: Request, res: Response) => {
+  try {
+    const file = req.file;
+    const rawCategory = (req.body?.category as string) || 'Medical Board';
+    const category: MeetingCategory = VALID_CATEGORIES.includes(rawCategory as MeetingCategory)
+      ? (rawCategory as MeetingCategory)
+      : 'Medical Board';
+    const targetInbox = (req.body?.targetInbox as string) || 'medical-board@medpark.local';
 
-  // Validation — surface errors the frontend can display.
-  if (!file || !file.originalname) {
-    return res.status(422).json({ error: 'No audio file received. Please attach a recording.' });
+    if (!file || !file.originalname) {
+      return res.status(422).json({ error: 'No audio file received. Please attach a recording.' });
+    }
+    if (file.size === 0) {
+      return res.status(422).json({ error: 'Audio file is empty.' });
+    }
+
+    const created = await submitAudio(file, meetingTypeFor(category));
+    jobs.set(created.job_id, {
+      targetInbox,
+      fileName: file.originalname,
+      category,
+      result: null,
+    });
+
+    return res.status(202).json({ id: created.job_id, status: 'queued' });
+  } catch (err) {
+    return sendLlmError(res, err);
   }
-  if (file.size === 0) {
-    return res.status(422).json({ error: 'Audio file is empty.' });
-  }
-
-  const id = crypto.randomBytes(8).toString('hex');
-  const job: Job = {
-    id,
-    status: 'queued',
-    progress: 0,
-    category,
-    targetInbox,
-    fileName: file.originalname,
-    fileSize: file.size,
-    currentStage: null,
-    createdAt: Date.now(),
-    steps: STAGES.map((s) => ({ key: s.key, label: s.label, state: 'pending', elapsed: null })),
-    result: null,
-  };
-  jobs.set(id, job);
-
-  startPipeline(job);
-
-  return res.status(202).json({ id, status: job.status });
 });
 
-// --- Poll job status -------------------------------------------------------
-app.get('/api/status/:id', (req: Request, res: Response) => {
-  const job = jobs.get(req.params.id);
-  if (!job) {
-    return res.status(404).json({ error: 'Unknown job id.' });
+app.get('/api/status/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id;
+    const remote = await fetchStatus(id);
+    const tracked = jobs.get(id) ?? {
+      targetInbox: '',
+      fileName: '',
+      category: 'Medical Board' as MeetingCategory,
+      result: null,
+    };
+    if (!jobs.has(id)) jobs.set(id, tracked);
+
+    const mapped = stepsFor(remote.status, remote.elapsed_seconds);
+    let result: MoMResult | null = null;
+
+    if (remote.status === 'COMPLETED') {
+      if (!tracked.result) tracked.result = mapResult(await fetchResult(id), tracked);
+      result = tracked.result;
+    }
+
+    return res.status(200).json({
+      id,
+      status: mapped.status,
+      progress: remote.status === 'COMPLETED' ? 100 : remote.progress_percent ?? 0,
+      currentStage: mapped.currentStage,
+      steps: mapped.steps,
+      result,
+      message: remote.status === 'FAILED' ? remote.message || 'Pipeline failed.' : undefined,
+    });
+  } catch (err) {
+    return sendLlmError(res, err);
   }
-  return res.status(200).json({
-    id: job.id,
-    status: job.status,
-    progress: job.progress,
-    currentStage: job.currentStage,
-    steps: job.steps.map(({ startedAt, ...rest }) => rest), // hide internal timestamp
-    result: job.status === 'done' ? job.result : null,
-  });
 });
 
-// --- Error handler (e.g. multer file-size limit) ---------------------------
+function sendLlmError(res: Response, err: unknown): Response {
+  if (err instanceof LlmError) {
+    const status = err.status >= 400 && err.status < 600 ? err.status : 502;
+    return res.status(status).json({ error: err.message });
+  }
+  const message = err instanceof Error ? err.message : 'Internal server error.';
+  return res.status(500).json({ error: message });
+}
+
 app.use((err: unknown, _req: Request, res: Response, _next: express.NextFunction) => {
   if (err instanceof multer.MulterError) {
     const msg =
       err.code === 'LIMIT_FILE_SIZE'
-        ? 'Audio file exceeds the 50 MB limit.'
+        ? `Audio file exceeds the ${MAX_MB} MB limit.`
         : `Upload error: ${err.message}`;
     return res.status(400).json({ error: msg });
   }
   return res.status(500).json({ error: 'Internal server error.' });
 });
 
-// --- 404 fallback ----------------------------------------------------------
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: 'Not found' });
 });
 
 app.listen(PORT, () => {
-  console.log(`\n  MEDPARK SECURE MoM mock backend (Express + TypeScript)`);
+  console.log(`\n  MEDPARK SECURE MoM backend`);
   console.log(`  Listening on http://localhost:${PORT}`);
+  console.log(`  Forwarding audio to ${LLM_BASE_URL}`);
   console.log(`  API docs at   http://localhost:${PORT}/api-docs\n`);
 });
